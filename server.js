@@ -4,28 +4,41 @@ import fetch from 'node-fetch';
 import cors from 'cors';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
-import { fileURLToPath } from 'url';
-import { dirname } from 'path';
 
 dotenv.config();
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(cors());
+// Middleware
+app.use(cors({
+  origin: process.env.NODE_ENV === 'production' ? false : true, // Disable CORS in prod (app proxy handles it)
+}));
 app.use(express.json());
 
-const SHOP = process.env.SHOPIFY_SHOP;
+// Environment variables with validation
+const {
+  SHOPIFY_SHOP,
+  SHOPIFY_API_KEY,
+  SHOPIFY_API_SECRET,
+  SHOPIFY_SCOPES,
+  SHOPIFY_ACCESS_TOKEN,
+  SHOPIFY_REDIRECT_URI,
+  NODE_ENV = 'development'
+} = process.env;
+
+// Validate required env vars
+if (!SHOPIFY_SHOP) throw new Error('SHOPIFY_SHOP is required');
+if (!SHOPIFY_API_KEY) throw new Error('SHOPIFY_API_KEY is required');
+if (!SHOPIFY_API_SECRET) throw new Error('SHOPIFY_API_SECRET is required');
+
 const API_VERSION = '2025-10';
-const ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
+const ACCESS_TOKEN = SHOPIFY_ACCESS_TOKEN;
 
 // ---- Helper to fetch paginated metaobjects ----
 async function fetchAllCOAs() {
   if (!ACCESS_TOKEN) {
-    throw new Error('SHOPIFY_ACCESS_TOKEN not set in .env');
+    throw new Error('SHOPIFY_ACCESS_TOKEN not set');
   }
 
   const allCOAs = [];
@@ -54,7 +67,7 @@ async function fetchAllCOAs() {
       }
     `;
 
-    const response = await fetch(`https://${SHOP}/admin/api/${API_VERSION}/graphql.json`, {
+    const response = await fetch(`https://${SHOPIFY_SHOP}/admin/api/${API_VERSION}/graphql.json`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -63,26 +76,38 @@ async function fetchAllCOAs() {
       body: JSON.stringify({ query }),
     });
 
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('GraphQL HTTP error:', response.status, errorText);
+      throw new Error(`GraphQL request failed: ${response.status}`);
+    }
+
     const { data, errors } = await response.json();
 
     if (errors) {
       console.error('GraphQL errors:', errors);
-      throw new Error('GraphQL query failed');
+      throw new Error(`GraphQL errors: ${JSON.stringify(errors)}`);
     }
 
     const edges = data.metaobjects?.edges || [];
     edges.forEach(edge => {
       const coa = {
+        id: edge.node.id,
         date: edge.node.date?.value,
         product: edge.node.product_name?.value,
         batch_number: edge.node.batch_number?.value,
         pdf_link: edge.node.pdf_link?.value,
         best_by_date: edge.node.best_by_date?.value,
       };
-      if (coa.date) allCOAs.push(coa); // Only add if has date
+      // Only add if has required fields
+      if (coa.date && coa.product) {
+        allCOAs.push(coa);
+      }
     });
 
-    after = data.metaobjects?.pageInfo?.hasNextPage ? data.metaobjects.pageInfo.endCursor : null;
+    after = data.metaobjects?.pageInfo?.hasNextPage 
+      ? data.metaobjects.pageInfo.endCursor 
+      : null;
   } while (after);
 
   // Sort by date descending
@@ -90,85 +115,32 @@ async function fetchAllCOAs() {
   return allCOAs;
 }
 
-// ---- Home route - OAuth redirect ----
-app.get('/', (req, res) => {
-  const installUrl = `https://${SHOP}/admin/oauth/authorize?client_id=${process.env.SHOPIFY_API_KEY}&scope=${process.env.SHOPIFY_SCOPES}&redirect_uri=${process.env.SHOPIFY_REDIRECT_URI}&state=123&grant_options[]=per-user`;
-  console.log('➡️ Redirecting to Shopify install URL:', installUrl);
-  res.redirect(installUrl);
-});
-
-// ---- OAuth callback ----
-app.get('/auth/callback', async (req, res) => {
-  const { shop, code, state } = req.query;
-
-  if (!shop || !code) {
-    return res.status(400).send('Missing shop or code parameter.');
-  }
-
+// ---- App proxy verification middleware ----
+function verifyAppProxy(req, res, next) {
   try {
-    const tokenResponse = await fetch(`https://${shop}/admin/oauth/access_token`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        client_id: process.env.SHOPIFY_API_KEY,
-        client_secret: process.env.SHOPIFY_API_SECRET,
-        code,
-      }),
-    });
+    // Shopify app proxy sends signature in query params
+    const signature = req.get('X-Shopify-Hmac-Sha256') || req.query.signature;
+    const body = JSON.stringify(req.body);
+    const queryString = req.url.split('?')[1];
 
-    const data = await tokenResponse.json();
-
-    if (data.access_token) {
-      console.log('✅ Access Token:', data.access_token);
-      res.send(`App installed! Paste this access token into .env as SHOPIFY_ACCESS_TOKEN and restart:<br><pre>${data.access_token}</pre>`);
-    } else {
-      console.error('❌ Failed to get access token:', data);
-      res.status(500).send('Failed to retrieve access token. Check server console.');
+    if (!signature) {
+      console.error('Missing proxy signature');
+      return res.status(401).json({ error: 'Missing signature' });
     }
-  } catch (error) {
-    console.error('FetchError:', error);
-    res.status(500).send('Error during token exchange.');
-  }
-});
 
-// ---- Proxy verification middleware ----
-function verifyProxy(req, res, next) {
-  const { signature, ...query } = req.query;
-  if (!signature) return res.status(401).send('Missing signature');
+    // Verify HMAC for body (POST) or query params (GET)
+    let calculatedHmac;
+    if (req.method === 'POST' && body) {
+      calculatedHmac = crypto
+        .createHmac('sha256', SHOPIFY_API_SECRET)
+        .update(body)
+        .digest('base64');
+    } else if (queryString) {
+      // For GET requests with query params
+      calculatedHmac = crypto
+        .createHmac('sha256', SHOPIFY_API_SECRET)
+        .update(queryString)
+        .digest('hex');
+    }
 
-  const queryString = new URLSearchParams(query).toString();
-  const calculatedSignature = crypto
-    .createHmac('sha256', process.env.SHOPIFY_API_SECRET)
-    .update(queryString)
-    .digest('hex');
-
-  if (calculatedSignature !== signature) {
-    return res.status(401).send('Invalid signature');
-  }
-  next();
-}
-
-// ---- Routes ----
-app.get('/proxy/coas', verifyProxy, async (req, res) => {
-  try {
-    const coas = await fetchAllCOAs();
-    res.json(coas);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Failed to fetch COAs' });
-  }
-});
-
-app.get('/api/coas', async (req, res) => {
-  try {
-    const coas = await fetchAllCOAs();
-    res.json(coas);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Failed to fetch COAs' });
-  }
-});
-
-app.listen(PORT, () => {
-  console.log(`✅ Server running on http://localhost:${PORT}`);
-});
+    if (!calculatedHmac || calculatedHmac !== signature) {
