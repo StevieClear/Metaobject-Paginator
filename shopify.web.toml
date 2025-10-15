@@ -1,0 +1,30 @@
+name = "Metaobject Paginator"
+client_id = "fdb8b134f5d4d923df5b19bb16d615f0"  # Your actual client ID
+
+application_url = "http://localhost:3000"  # Update after deployment
+embedded = false
+
+# Required: Add commands section
+[commands]
+dev = "node server.js"
+build = "echo 'No build step required'"
+serve = "node server.js"
+
+[build]
+automatically_update_urls_on_dev = true
+# For custom Node.js apps, you might need to specify:
+# command = "npm run build"  # If you add a build script
+# publish = "."  # Root directory for deployment
+
+[access_scopes]
+scopes = "read_metaobjects,read_products,read_files"
+optional_scopes = []
+
+[auth]
+redirect_urls = [
+  "http://localhost:3000/auth/callback",
+  "https://your-app.vercel.app/auth/callback"
+]
+
+[webhooks]
+api_version = "2025-10"
