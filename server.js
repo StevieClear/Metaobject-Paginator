@@ -246,6 +246,33 @@ app.get('/api/coas', async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch COAs' });
   }
 });
+// Webhook verification middleware
+function verifyWebhook(req, res, next) {
+  const hmac = req.get('X-Shopify-Hmac-Sha256');
+  if (!hmac) {
+    console.log('Missing webhook HMAC');
+    return res.status(401).send('Missing HMAC');
+  }
+  const body = JSON.stringify(req.body);
+  const calculatedHmac = crypto
+    .createHmac('sha256', process.env.SHOPIFY_API_SECRET)
+    .update(body, 'utf8')
+    .digest('base64');
+  if (calculatedHmac !== hmac) {
+    console.log('Invalid webhook HMAC');
+    return res.status(401).send('Invalid HMAC');
+  }
+  next();
+}
 
+app.post('/webhooks/app/uninstalled', express.json(), verifyWebhook, async (req, res) => {
+  console.log('Received app/uninstalled webhook:', req.body);
+  res.status(200).send('Webhook received');
+});
+
+app.post('/webhooks/app/scopes_updated', express.json(), verifyWebhook, async (req, res) => {
+  console.log('Received app/scopes_updated webhook:', req.body);
+  res.status(200).send('Webhook received');
+});
 // Export for Vercel
 export default app;
