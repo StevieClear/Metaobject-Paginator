@@ -2,7 +2,7 @@ name = "Metaobject Paginator"
 client_id = "fdb8b134f5d4d923df5b19bb16d615f0"
 
 # Production deployed URL (replace with your actual Vercel/GoDaddy URL)
-application_url = "https://your-coa-app.vercel.app"
+application_url = "https://metaobject-paginator.vercel.app"
 
 embedded = false
 
@@ -15,13 +15,12 @@ serve = "node server.js"
 automatically_update_urls_on_dev = true
 
 [access_scopes]
-scopes = "read_metaobjects,read_products,read_files"
+scopes = "read_metaobjects,read_products,read_files,write_app_proxy"
 optional_scopes = []
 
 [auth]
 redirect_urls = [
-  "http://localhost:3000/auth/callback",                    # Local development
-  "https://your-coa-app.vercel.app/auth/callback"          # Production
+   "https://metaobject-paginator.vercel.app/auth/callback",          # Production
 ]
 
 [webhooks]
