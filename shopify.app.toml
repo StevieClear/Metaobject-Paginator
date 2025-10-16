@@ -1,29 +1,16 @@
-# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
-
-client_id = "fdb8b134f5d4d923df5b19bb16d615f0"
-name = "Metaobject Paginator"
+client_id = "d4ef87c3b5cdbd9fda143557fe76241b"
+name = "Metaobject Paginator V2"
 application_url = "https://metaobject-paginator.vercel.app"
-embedded = true
-
-[build]
-automatically_update_urls_on_dev = true
-
+embedded = false
 [webhooks]
 api_version = "2025-10"
-
-  [[webhooks.subscriptions]]
-  topics = [ "app/scopes_update" ]
-  uri = "/webhooks/app/scopes_update"
-
-  [[webhooks.subscriptions]]
-  topics = [ "app/uninstalled" ]
-  uri = "/webhooks/app/uninstalled"
-
+[[webhooks.subscriptions]]
+topics = ["app/uninstalled"]
+uri = "/webhooks/app/uninstalled"
+[[webhooks.subscriptions]]
+topics = ["app/scopes_update"]
+uri = "/webhooks/app/scopes_update"
 [access_scopes]
-# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = "read_files,read_metaobjects,read_products,write_app_proxy"
-optional_scopes = [ ]
-use_legacy_install_flow = false
-
+scopes = "read_metaobjects,read_products,read_files,write_app_proxy"
 [auth]
-redirect_urls = [ "https://metaobject-paginator.vercel.app/auth/callback" ]
+redirect_urls = ["https://metaobject-paginator.vercel.app/auth/callback"]
