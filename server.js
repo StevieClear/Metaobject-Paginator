@@ -10,9 +10,7 @@ const app = express();
 
 // Middleware
 app.use(cors({
-  origin: process.env.NODE_ENV === 'production' ? 'https://8th-wonder-development.myshopify.com' : true,
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'X-Shopify-Hmac-Sha256']
+  origin: ['https:8th-wonder-development.myshopify.com', 'https:dev-8th-wonder.myshopify.com','https:8thwonder.com' 'http://localhost:3000'], 
 }));
 app.use(express.json());
 
