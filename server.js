@@ -108,7 +108,7 @@ async function fetchAllCOAs() {
       : null;
   } while (after);
 
-  allCOAs.sort((a, b) => new Date(b.date) - new Date(a.date));
+  console.log(`Fetched ${allCOAs.length} COAs`);
   return allCOAs;
 }
 
@@ -132,6 +132,7 @@ function verifyAppProxy(req, res, next) {
     return res.status(401).json({ error: 'Invalid signature' });
   }
   
+  console.log('HMAC verification passed');
   next();
 }
 
@@ -180,10 +181,12 @@ app.get('/auth/callback', async (req, res) => {
   }
 });
 
-// App proxy route (HMAC temporarily bypassed for debugging)
+// App proxy route (HMAC bypassed for debugging)
 app.all('/coas', /*verifyAppProxy,*/ async (req, res) => {
   try {
+    console.log('Received /coas request from:', req.headers.origin);
     const coas = await fetchAllCOAs();
+    console.log('Sending COAs:', coas.length);
     res.json(coas);
   } catch (err) {
     console.error('Proxy error:', err.message, err.stack);
@@ -194,7 +197,9 @@ app.all('/coas', /*verifyAppProxy,*/ async (req, res) => {
 // API route (for testing)
 app.get('/api/coas', async (req, res) => {
   try {
+    console.log('Received /api/coas request from:', req.headers.origin);
     const coas = await fetchAllCOAs();
+    console.log('Sending COAs:', coas.length);
     res.json(coas);
   } catch (err) {
     console.error('API error:', err.message, err.stack);
