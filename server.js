@@ -8,22 +8,6 @@ dotenv.config();
 
 const app = express();
 
-// Middleware: Raw body for HMAC (only for /coas)
-app.use((req, res, next) => {
-  if (req.path === '/coas' && req.method !== 'GET') {  // Only for non-GET to avoid hanging
-    let data = '';
-    req.setEncoding('utf8');
-    req.on('data', (chunk) => { data += chunk; });
-    req.on('end', () => {
-      req.rawBody = data;
-      next();
-    });
-    req.on('error', next);  // Handle stream errors
-    return;
-  }
-  next();
-});
-
 app.use(express.json());
 app.use(cors({
   origin: [
@@ -31,7 +15,7 @@ app.use(cors({
     'https://dev-8th-wonder.myshopify.com',
     'https://8thwonder.com',
     'http://localhost:3000'
-  ],  // Fixed: Added missing commas
+  ],
   credentials: true
 }));
 
@@ -144,27 +128,47 @@ async function fetchAllCOAs(shopDomain, accessToken) {
   return allCOAs;
 }
 
-// App proxy verification
+// App proxy verification (query param-based, per Shopify docs)
 function verifyAppProxy(req, res, next) {
-  const signature = req.get('X-Shopify-Hmac-Sha256');
+  const signature = req.query.signature;
   
   if (!signature) {
-    console.log('Missing proxy signature');
+    console.log('Missing proxy signature param');
     return res.status(401).json({ error: 'Missing signature' });
   }
 
-  const rawBody = req.rawBody || (req.method === 'GET' ? '' : JSON.stringify(req.body));
-  const calculatedHmac = crypto
-    .createHmac('sha256', SHOPIFY_API_SECRET)
-    .update(rawBody, 'utf8')
-    .digest('base64');
+  // Copy query, remove signature
+  const query = { ...req.query };
+  delete query.signature;
 
-  if (calculatedHmac !== signature) {
-    console.log('Invalid proxy signature. Calculated:', calculatedHmac, 'vs Received:', signature);
+  // Sort keys, join as key=value (arrays comma-joined)
+  const sortedParams = Object.keys(query)
+    .sort()
+    .map(key => `${key}=${Array.isArray(query[key]) ? query[key].join(',') : query[key]}`)
+    .join('');
+
+  console.log('Params to hash:', sortedParams);
+
+  // Hash with secret (hex, not base64)
+  const calculatedSignature = crypto
+    .createHmac('sha256', SHOPIFY_API_SECRET)
+    .update(sortedParams)
+    .digest('hex');
+
+  console.log('Calculated sig:', calculatedSignature, 'vs Received:', signature);
+
+  // Secure compare
+  const isValid = crypto.timingSafeEqual(
+    Buffer.from(calculatedSignature),
+    Buffer.from(signature)
+  );
+
+  if (!isValid) {
+    console.log('Invalid proxy signature');
     return res.status(401).json({ error: 'Invalid signature' });
   }
   
-  console.log('HMAC verification passed');
+  console.log('Proxy signature verification passed');
   next();
 }
 
@@ -213,13 +217,13 @@ app.get('/auth/callback', async (req, res) => {
   }
 });
 
-// App proxy route
+// App proxy route (now with correct verification)
 app.all('/coas', verifyAppProxy, async (req, res) => {
   try {
-    const shopDomain = req.get('X-Shopify-Shop-Domain');
+    const shopDomain = req.query.shop;  // From query param
     console.log('Received /coas request from:', shopDomain);
 
-    // Temporarily disable shop check for dev testing (re-enable for prod)
+    // Temporarily disable shop check for dev (re-enable later)
     // if (!shopDomain || shopDomain !== SHOPIFY_SHOP) {
     //   return res.status(403).json({ error: 'Unauthorized shop' });
     // }
@@ -228,7 +232,10 @@ app.all('/coas', verifyAppProxy, async (req, res) => {
     console.log('Sending COAs:', coas.length);
     res.json(coas);
   } catch (err) {
-    console.error('Full proxy error:', err.message, err.stack, { shopDomain: req.get('X-Shopify-Shop-Domain'), tokenSet: !!SHOPIFY_ACCESS_TOKEN });
+    console.error('Full proxy error:', err.message, err.stack, { 
+      shopDomain: req.query.shop, 
+      tokenSet: !!SHOPIFY_ACCESS_TOKEN 
+    });
     res.status(500).json({ error: `Failed to fetch COAs: ${err.message}` });
   }
 });
