@@ -2,6 +2,12 @@ client_id = "d4ef87c3b5cdbd9fda143557fe76241b"
 name = "Metaobject Paginator V2"
 application_url = "https://metaobject-paginator.vercel.app"
 embedded = false
+
+[app_proxy]
+url = "/coas"
+prefix = "apps"
+subpath = "coas"
+
 [webhooks]
 api_version = "2025-10"
 [[webhooks.subscriptions]]
@@ -10,7 +16,9 @@ uri = "/webhooks/app/uninstalled"
 [[webhooks.subscriptions]]
 topics = ["app/scopes_update"]
 uri = "/webhooks/app/scopes_update"
+
 [access_scopes]
 scopes = "read_metaobjects,read_products,read_files,write_app_proxy"
+
 [auth]
 redirect_urls = ["https://metaobject-paginator.vercel.app/auth/callback"]

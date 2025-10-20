@@ -8,18 +8,39 @@ dotenv.config();
 
 const app = express();
 
-// Middleware
-app.use(cors({
-  origin: ['https:8th-wonder-development.myshopify.com', 'https:dev-8th-wonder.myshopify.com','https:8thwonder.com' 'http://localhost:3000'], 
-}));
+// Middleware: Raw body for HMAC (only for /coas)
+app.use((req, res, next) => {
+  if (req.path === '/coas' && req.method !== 'GET') {  // Only for non-GET to avoid hanging
+    let data = '';
+    req.setEncoding('utf8');
+    req.on('data', (chunk) => { data += chunk; });
+    req.on('end', () => {
+      req.rawBody = data;
+      next();
+    });
+    req.on('error', next);  // Handle stream errors
+    return;
+  }
+  next();
+});
+
 app.use(express.json());
+app.use(cors({
+  origin: [
+    'https://8th-wonder-development.myshopify.com', 
+    'https://dev-8th-wonder.myshopify.com',
+    'https://8thwonder.com',
+    'http://localhost:3000'
+  ],  // Fixed: Added missing commas
+  credentials: true
+}));
 
 // Environment variables
 const {
   SHOPIFY_SHOP,
   SHOPIFY_API_KEY,
   SHOPIFY_API_SECRET,
-  SHOPIFY_SCOPES,
+  SHOPIFY_SCOPES = 'read_metaobjects,read_products,read_files,write_app_proxy',
   SHOPIFY_ACCESS_TOKEN,
   SHOPIFY_REDIRECT_URI,
   NODE_ENV = 'development'
@@ -38,11 +59,16 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Fetch all COAs
-async function fetchAllCOAs() {
-  if (!SHOPIFY_ACCESS_TOKEN) {
+// Fetch all COAs with pagination
+async function fetchAllCOAs(shopDomain, accessToken) {
+  if (!accessToken) {
     throw new Error('SHOPIFY_ACCESS_TOKEN not set');
   }
+  if (!shopDomain) {
+    throw new Error('SHOPIFY_SHOP domain not provided');
+  }
+
+  console.log('fetchAllCOAs called with shop:', shopDomain, 'token exists:', !!accessToken);
 
   const allCOAs = [];
   let after = null;
@@ -70,14 +96,22 @@ async function fetchAllCOAs() {
       }
     `;
 
-    const response = await fetch(`https://${SHOPIFY_SHOP}/admin/api/${API_VERSION}/graphql.json`, {
+    const response = await fetch(`https://${shopDomain}/admin/api/${API_VERSION}/graphql.json`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
+        'X-Shopify-Access-Token': accessToken,
       },
       body: JSON.stringify({ query }),
     });
+
+    console.log('GraphQL response status:', response.status);
+
+    if (!response.ok) {
+      const text = await response.text();
+      console.error('Full GraphQL response body:', text);
+      throw new Error(`HTTP ${response.status}: ${text}`);
+    }
 
     const { data, errors } = await response.json();
 
@@ -106,7 +140,7 @@ async function fetchAllCOAs() {
       : null;
   } while (after);
 
-  console.log(`Fetched ${allCOAs.length} COAs`);
+  console.log(`Fetched ${allCOAs.length} COAs for ${shopDomain}`);
   return allCOAs;
 }
 
@@ -119,14 +153,14 @@ function verifyAppProxy(req, res, next) {
     return res.status(401).json({ error: 'Missing signature' });
   }
 
-  const body = req.body;
+  const rawBody = req.rawBody || (req.method === 'GET' ? '' : JSON.stringify(req.body));
   const calculatedHmac = crypto
     .createHmac('sha256', SHOPIFY_API_SECRET)
-    .update(JSON.stringify(body), 'utf8')
+    .update(rawBody, 'utf8')
     .digest('base64');
 
   if (calculatedHmac !== signature) {
-    console.log('Invalid proxy signature');
+    console.log('Invalid proxy signature. Calculated:', calculatedHmac, 'vs Received:', signature);
     return res.status(401).json({ error: 'Invalid signature' });
   }
   
@@ -141,7 +175,7 @@ app.get('/', (req, res) => {
     return res.status(400).send('Missing shop parameter');
   }
 
-  const installUrl = `https://${shop}/admin/oauth/authorize?client_id=${SHOPIFY_API_KEY}&scope=${SHOPIFY_SCOPES || 'read_metaobjects,read_products,read_files,write_app_proxy'}&redirect_uri=${SHOPIFY_REDIRECT_URI}&state=${Date.now()}&grant_options[]=per-user`;
+  const installUrl = `https://${shop}/admin/oauth/authorize?client_id=${SHOPIFY_API_KEY}&scope=${SHOPIFY_SCOPES}&redirect_uri=${SHOPIFY_REDIRECT_URI}&state=${Date.now()}&grant_options[]=per-user`;
   
   console.log('Redirecting to OAuth:', installUrl);
   res.redirect(installUrl);
@@ -168,8 +202,8 @@ app.get('/auth/callback', async (req, res) => {
     const data = await tokenResponse.json();
 
     if (data.access_token) {
-      console.log('✅ Access Token:', data.access_token);
-      res.send(`<h1>Success!</h1><pre>${data.access_token}</pre><p>Add to Vercel env vars</p>`);
+      console.log('✅ Access Token for', shop, ':', data.access_token);
+      res.send(`<h1>Success for ${shop}!</h1><pre>${data.access_token}</pre><p>Add SHOPIFY_SHOP=${shop} and SHOPIFY_ACCESS_TOKEN to Vercel env vars</p>`);
     } else {
       res.status(500).send('Failed to get token');
     }
@@ -179,24 +213,32 @@ app.get('/auth/callback', async (req, res) => {
   }
 });
 
-// App proxy route (HMAC bypassed for debugging)
-app.all('/coas', /*verifyAppProxy,*/ async (req, res) => {
+// App proxy route
+app.all('/coas', verifyAppProxy, async (req, res) => {
   try {
-    console.log('Received /coas request from:', req.headers.origin);
-    const coas = await fetchAllCOAs();
+    const shopDomain = req.get('X-Shopify-Shop-Domain');
+    console.log('Received /coas request from:', shopDomain);
+
+    // Temporarily disable shop check for dev testing (re-enable for prod)
+    // if (!shopDomain || shopDomain !== SHOPIFY_SHOP) {
+    //   return res.status(403).json({ error: 'Unauthorized shop' });
+    // }
+
+    const coas = await fetchAllCOAs(shopDomain, SHOPIFY_ACCESS_TOKEN);
     console.log('Sending COAs:', coas.length);
     res.json(coas);
   } catch (err) {
-    console.error('Proxy error:', err.message, err.stack);
+    console.error('Full proxy error:', err.message, err.stack, { shopDomain: req.get('X-Shopify-Shop-Domain'), tokenSet: !!SHOPIFY_ACCESS_TOKEN });
     res.status(500).json({ error: `Failed to fetch COAs: ${err.message}` });
   }
 });
 
-// API route (for testing)
+// API route (for testing, no proxy)
 app.get('/api/coas', async (req, res) => {
   try {
-    console.log('Received /api/coas request from:', req.headers.origin);
-    const coas = await fetchAllCOAs();
+    const shopDomain = SHOPIFY_SHOP;
+    console.log('Received /api/coas request');
+    const coas = await fetchAllCOAs(shopDomain, SHOPIFY_ACCESS_TOKEN);
     console.log('Sending COAs:', coas.length);
     res.json(coas);
   } catch (err) {
