@@ -6,6 +6,14 @@ import cors from 'cors';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
 
+import { Redis } from '@upstash/redis';
+
+const kv = new Redis({
+  url: process.env.UPSTASH_REDIS_REST_URL,
+  token: process.env.UPSTASH_REDIS_REST_TOKEN,
+});
+
+
 dotenv.config();
 
 const app = express();
@@ -35,14 +43,26 @@ const {
 const API_VERSION = '2025-10';
 
 // Health check
-app.get('/health', (req, res) => {
-  res.json({ 
+app.get('/health', async (req, res) => {
+  const base = { 
     status: 'OK', 
     shop: SHOPIFY_SHOP || 'MISSING',
     apiKeySet: !!SHOPIFY_API_KEY,
     tokenSet: !!SHOPIFY_ACCESS_TOKEN,
     environment: NODE_ENV 
-  });
+  };
+  try {
+    const testKey = `health-${Date.now()}`;
+    await kv.set(testKey, 'working');
+    const testGet = await kv.get(testKey);
+    base.kvWorking = testGet === 'working';
+    // Clean up
+    await kv.del(testKey);
+  } catch (e) {
+    base.kvWorking = false;
+    base.kvError = e.message;
+  }
+  res.json(base);
 });
 
 // Fetch all COAs with pagination
