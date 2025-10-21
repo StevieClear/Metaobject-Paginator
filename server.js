@@ -179,7 +179,6 @@ app.get('/', (req, res) => {
     return res.status(400).send('Missing shop parameter');
   }
 
-  const installUrl = `https://${shop}/admin/oauth/authorize?client_id=${SHOPIFY_API_KEY}&scope=${SHOPIFY_SCOPES}&redirect_uri=${SHOPIFY_REDIRECT_URI}&state=${Date.now()}&grant_options[]=per-user`;
   
   console.log('Redirecting to OAuth:', installUrl);
   res.redirect(installUrl);
