@@ -1,12 +1,14 @@
 # Dependencies
-node_modules/
+/node_modules
+
+# Environment variables
 .env
 .env.local
 .env.production
 
 # Vercel
 .vercel
-vercel.json  # Optional: keep for config, or commit it
+vercel.json
 
 # Logs
 *.log
@@ -16,4 +18,14 @@ npm-debug.log*
 .DS_Store
 Thumbs.db
 
+# Shopify CLI
+.shopify/
 
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Optional: Certs (if generated)
+*.pem
