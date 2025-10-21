@@ -1,3 +1,5 @@
+// Server.js before splitting into brands
+
 import express from 'express';
 import fetch from 'node-fetch';
 import cors from 'cors';
@@ -179,7 +181,7 @@ app.get('/', (req, res) => {
     return res.status(400).send('Missing shop parameter');
   }
 
-  
+const installUrl = `https://${shop}/admin/oauth/authorize?client_id=${SHOPIFY_API_KEY}&scope=${SHOPIFY_SCOPES || 'read_metaobjects,read_products,read_files,write_app_proxy'}&redirect_uri=${SHOPIFY_REDIRECT_URI}&state=${Date.now()}&access_mode=offline`;  // Add access_mode=offline, remove grant_options  
   console.log('Redirecting to OAuth:', installUrl);
   res.redirect(installUrl);
 });
