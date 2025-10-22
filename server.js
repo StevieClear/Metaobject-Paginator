@@ -5,7 +5,6 @@ import fetch from 'node-fetch';
 import cors from 'cors';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
-
 import { Redis } from '@upstash/redis';
 
 // Get token for a specific shop from KV
@@ -42,7 +41,7 @@ const {
   SHOPIFY_API_KEY,
   SHOPIFY_API_SECRET,
   SHOPIFY_SCOPES = 'read_metaobjects,read_products,read_files,write_app_proxy',
-  SHOPIFY_ACCESS_TOKEN,
+  //SHOPIFY_ACCESS_TOKEN,
   SHOPIFY_REDIRECT_URI,
   NODE_ENV = 'development'
 } = process.env;
