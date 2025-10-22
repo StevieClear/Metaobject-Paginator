@@ -55,8 +55,21 @@ app.get('/health', async (req, res) => {
     status: 'OK', 
     shop: SHOPIFY_SHOP || 'MISSING',
     apiKeySet: !!SHOPIFY_API_KEY,
-    // tokenSet: !!SHOPIFY_ACCESS_TOKEN,
-    environment: NODE_ENV, 
+    environment: NODE_ENV 
+  };
+  try {
+    const testKey = `health-${Date.now()}`;
+    await kv.set(testKey, 'working');
+    const testGet = await kv.get(testKey);
+    base.kvWorking = testGet === 'working';
+    // Clean up
+    await kv.del(testKey);
+  } catch (e) {
+    base.kvWorking = false;
+    base.kvError = e.message;
+  }
+  res.json(base);
+});
   };
   try {
     const testKey = `health-${Date.now()}`;
