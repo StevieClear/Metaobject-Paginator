@@ -9,8 +9,8 @@ import dotenv from 'dotenv';
 import { Redis } from '@upstash/redis';
 
 const kv = new Redis({
-  url: process.env.UPSTASH_REDIS_REST_URL,
-  token: process.env.UPSTASH_REDIS_REST_TOKEN,
+  url: process.env.KV_REST_API_URL,  // Maps to your https://... var
+  token: process.env.KV_REST_API_TOKEN,  // Maps to your full token var
 });
 
 
