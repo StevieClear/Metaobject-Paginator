@@ -8,11 +8,18 @@ import dotenv from 'dotenv';
 
 import { Redis } from '@upstash/redis';
 
+// Get token for a specific shop from KV
+async function getTokenForShop(shop) {
+  if (!shop) throw new Error('No shop provided');
+  const token = await kv.get(shop);
+  if (!token) throw new Error(`No token for ${shop}; run OAuth first`);
+  return token;
+}
+
 const kv = new Redis({
   url: process.env.KV_REST_API_URL,  // Maps to your https://... var
   token: process.env.KV_REST_API_TOKEN,  // Maps to your full token var
 });
-
 
 dotenv.config();
 
@@ -48,7 +55,7 @@ app.get('/health', async (req, res) => {
     status: 'OK', 
     shop: SHOPIFY_SHOP || 'MISSING',
     apiKeySet: !!SHOPIFY_API_KEY,
-    tokenSet: !!SHOPIFY_ACCESS_TOKEN,
+    // tokenSet: !!SHOPIFY_ACCESS_TOKEN,
     environment: NODE_ENV 
   };
   try {
@@ -207,7 +214,7 @@ const installUrl = `https://${shop}/admin/oauth/authorize?client_id=${SHOPIFY_AP
 });
 
 app.get('/auth/callback', async (req, res) => {
-  const { shop, code } = req.query;
+  const { shop, code, state } = req.query;
 
   if (!shop || !code) {
     return res.status(400).send('Missing shop or code');
@@ -223,6 +230,28 @@ app.get('/auth/callback', async (req, res) => {
         code,
       }),
     });
+
+    if (!tokenResponse.ok) {
+      const errText = await tokenResponse.text();
+      throw new Error(`OAuth response: ${tokenResponse.status} - ${errText}`);
+    }
+
+    const data = await tokenResponse.json();
+
+    if (data.access_token) {
+      // Store offline token in KV (key: shop domain)
+      await kv.set(shop, data.access_token);
+      console.log(`✅ Stored offline token for ${shop}`);
+      
+      res.send(`<h1>Success for ${shop}!</h1><p>Token auto-saved in KV. <a href="/">Install on another shop</a> (add ?shop=theirshop.myshopify.com)</p>`);
+    } else {
+      res.status(500).send('Failed to get token: ' + JSON.stringify(data));
+    }
+  } catch (error) {
+    console.error('OAuth error:', error);
+    res.status(500).send(`OAuth failed: ${error.message}`);
+  }
+});
 
     const data = await tokenResponse.json();
 
