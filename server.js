@@ -56,7 +56,7 @@ app.get('/health', async (req, res) => {
     shop: SHOPIFY_SHOP || 'MISSING',
     apiKeySet: !!SHOPIFY_API_KEY,
     // tokenSet: !!SHOPIFY_ACCESS_TOKEN,
-    environment: NODE_ENV 
+    environment: NODE_ENV, 
   };
   try {
     const testKey = `health-${Date.now()}`;
