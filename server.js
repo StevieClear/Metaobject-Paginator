@@ -172,6 +172,63 @@ app.get('/', (req, res) => {
   `);
 });
 
+// OAuth callback - displays token for manual copy
+app.get('/auth/callback', async (req, res) => {
+  const { shop, code } = req.query;
+
+  if (!shop || !code) {
+    return res.status(400).send('Missing shop or code parameter');
+  }
+
+  try {
+    const { SHOPIFY_API_KEY, SHOPIFY_API_SECRET } = process.env;
+
+    if (!SHOPIFY_API_KEY || !SHOPIFY_API_SECRET) {
+      throw new Error('Missing SHOPIFY_API_KEY or SHOPIFY_API_SECRET in environment variables');
+    }
+
+    const tokenResponse = await fetch(`https://${shop}/admin/oauth/access_token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_id: SHOPIFY_API_KEY,
+        client_secret: SHOPIFY_API_SECRET,
+        code,
+      }),
+    });
+
+    if (!tokenResponse.ok) {
+      const errText = await tokenResponse.text();
+      throw new Error(`OAuth failed: ${tokenResponse.status} - ${errText}`);
+    }
+
+    const data = await tokenResponse.json();
+
+    if (data.access_token) {
+      res.send(`
+        <h1>✅ OAuth Success for ${shop}!</h1>
+        <h2>Copy Your Access Token:</h2>
+        <p style="background: #f0f0f0; padding: 20px; font-family: monospace; word-break: break-all; font-size: 14px;">
+          ${data.access_token}
+        </p>
+        <p><strong>Instructions:</strong></p>
+        <ol>
+          <li>Copy the entire token above</li>
+          <li>Go to Vercel → metaobject-paginator → Settings → Environment Variables</li>
+          <li>Update SHOPIFY_ACCESS_TOKEN with this token</li>
+          <li>Redeploy the app</li>
+        </ol>
+        <p><a href="/">Back to home</a></p>
+      `);
+    } else {
+      res.status(500).send(`Failed to get token: ${JSON.stringify(data)}`);
+    }
+  } catch (error) {
+    console.error('OAuth callback error:', error);
+    res.status(500).send(`OAuth error: ${error.message}`);
+  }
+});
+
 // App proxy route
 app.all('/coas', verifyAppProxy, async (req, res) => {
   try {
