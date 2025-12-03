@@ -105,6 +105,7 @@ async function fetchAllCOAs(shopDomain) {
         id: edge.node.id,
         date: edge.node.date?.value,
         product: edge.node.product_name?.value,
+        product_type: edge.node.product_type?.value || '',
         batch_number: edge.node.batch_number?.value,
         pdf_link: edge.node.pdf_link?.value,
         best_by_date: edge.node.best_by_date?.value,
@@ -119,7 +120,7 @@ async function fetchAllCOAs(shopDomain) {
       : null;
   } while (after);
 
-  console.log(`Fetched ${allCOAs.length} COAs`);
+  console.log(`Fetched ${allCOAs.length} COAs for ${shopDomain}`);
   return allCOAs;
 }
 
@@ -244,12 +245,15 @@ app.get('/auth/callback', async (req, res) => {
 // App proxy route
 app.all('/coas', verifyAppProxy, async (req, res) => {
   try {
-    console.log('Received /coas request from:', req.query.shop);
-    const coas = await fetchAllCOAs();
+    const shopDomain = req.query.shop;  // From query param
+    console.log('Received /coas request from:', shopDomain);
+    const coas = await fetchAllCOAs(shopDomain);
     console.log('Sending COAs:', coas.length);
     res.json(coas);
   } catch (err) {
-    console.error('Full proxy error:', err.message, err.stack);
+    console.error('Full proxy error:', err.message, err.stack, {
+      shopDomain: req.query.shop,
+    });
     res.status(500).json({ error: `Failed to fetch COAs: ${err.message}` });
   }
 });
@@ -257,8 +261,9 @@ app.all('/coas', verifyAppProxy, async (req, res) => {
 // API route (for testing, no proxy verification)
 app.get('/api/coas', async (req, res) => {
   try {
+    const shopDomain = req.query.shop || SHOPIFY_SHOP;
     console.log('Received /api/coas request');
-    const coas = await fetchAllCOAs();
+    const coas = await fetchAllCOAs(shopDomain);
     console.log('Sending COAs:', coas.length);
     res.json(coas);
   } catch (err) {
