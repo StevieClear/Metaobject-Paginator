@@ -191,11 +191,18 @@ app.get('/', (req, res) => {
 
 app.get('/auth/callback', async (req, res) => {
   const { shop, code, state } = req.query;
+  console.log('OAuth callback received:', { shop, hasCode: !!code, state });
+
   if (!shop || !code) {
     return res.status(400).send('Missing shop or code');
   }
+
   try {
-    const tokenResponse = await fetch(`https://${shop}/admin/oauth/access_token`, {
+    const tokenUrl = `https://${shop}/admin/oauth/access_token`;
+    console.log('Fetching token from:', tokenUrl);
+    console.log('Using client_id:', SHOPIFY_API_KEY);
+
+    const tokenResponse = await fetch(tokenUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -204,22 +211,38 @@ app.get('/auth/callback', async (req, res) => {
         code,
       }),
     });
+
+    console.log('Token response status:', tokenResponse.status);
+
     if (!tokenResponse.ok) {
       const errText = await tokenResponse.text();
+      console.error('Token response error:', errText);
       throw new Error(`OAuth response: ${tokenResponse.status} - ${errText}`);
     }
+
     const data = await tokenResponse.json();
+    console.log('Token response data keys:', Object.keys(data));
+
     if (data.access_token) {
       // Store offline token in KV (key: shop domain)
+      console.log('Attempting to store token in KV for shop:', shop);
       await kv.set(shop, data.access_token);
       console.log(`✅ Stored offline token for ${shop}`);
       res.send(`<h1>Success for ${shop}!</h1><p>Token auto-saved in KV. <a href="/">Install on another shop</a> (add ?shop=theirshop.myshopify.com)</p>`);
     } else {
+      console.error('No access_token in response:', data);
       res.status(500).send('Failed to get token: ' + JSON.stringify(data));
     }
   } catch (error) {
-    console.error('OAuth error:', error);
-    res.status(500).send(`OAuth failed: ${error.message}`);
+    console.error('OAuth error details:', {
+      message: error.message,
+      cause: error.cause,
+      stack: error.stack,
+      shop,
+      hasApiKey: !!SHOPIFY_API_KEY,
+      hasApiSecret: !!SHOPIFY_API_SECRET,
+    });
+    res.status(500).send(`OAuth failed: ${error.message}. Check Vercel logs for details.`);
   }
 });
 
