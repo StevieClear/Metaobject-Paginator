@@ -1,5 +1,5 @@
-name = "Metaobject Paginator V2"
-client_id = "<new-client-id-from-partner-dashboard>"
+name = "Metaobject Paginator V3"
+client_id = "d4ef87c3b5cdbd9fda143557fe76241b"
 application_url = "https://metaobject-paginator.vercel.app"
 embedded = false
 

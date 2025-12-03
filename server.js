@@ -11,8 +11,11 @@ const app = express();
 // Environment variables
 const {
   SHOPIFY_SHOP,
-  SHOPIFY_ACCESS_TOKEN,
+  SHOPIFY_API_KEY,
   SHOPIFY_API_SECRET,
+  SHOPIFY_ACCESS_TOKEN,
+  SHOPIFY_SCOPES = 'read_metaobjects,read_products,read_files,write_app_proxy',
+  SHOPIFY_REDIRECT_URI,
   NODE_ENV = 'development'
 } = process.env;
 
@@ -29,16 +32,22 @@ app.get('/health', async (req, res) => {
   });
 });
 
-// Fetch all COAs with pagination
-async function fetchAllCOAs() {
-  if (!SHOPIFY_SHOP) {
-    throw new Error('SHOPIFY_SHOP environment variable not set');
-  }
+// Helper: Get access token (for custom app, use single token from env)
+function getAccessToken(shop) {
+  if (!shop) throw new Error('No shop provided');
   if (!SHOPIFY_ACCESS_TOKEN) {
-    throw new Error('SHOPIFY_ACCESS_TOKEN environment variable not set');
+    throw new Error('SHOPIFY_ACCESS_TOKEN is not set. Please set it in your environment variables.');
   }
+  return SHOPIFY_ACCESS_TOKEN;
+}
 
-  console.log('fetchAllCOAs called for shop:', SHOPIFY_SHOP);
+// Fetch all COAs with pagination
+async function fetchAllCOAs(shopDomain) {
+  const accessToken = getAccessToken(shopDomain);
+  if (!shopDomain) {
+    throw new Error('SHOPIFY_SHOP domain not provided');
+  }
+  console.log('fetchAllCOAs called with shop:', shopDomain, 'token exists:', !!accessToken);
   const allCOAs = [];
   let after = null;
 
@@ -51,6 +60,7 @@ async function fetchAllCOAs() {
               id
               date: field(key: "date") { value }
               product_name: field(key: "product_name") { value }
+              product_type: field(key: "product_type") { value }
               batch_number: field(key: "batch_number") { value }
               pdf_link: field(key: "pdf_link") { value }
               best_by_date: field(key: "best_by_date") { value }
@@ -65,11 +75,11 @@ async function fetchAllCOAs() {
       }
     `;
 
-    const response = await fetch(`https://${SHOPIFY_SHOP}/admin/api/${API_VERSION}/graphql.json`, {
+    const response = await fetch(`https://${shopDomain}/admin/api/${API_VERSION}/graphql.json`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
+        'X-Shopify-Access-Token': accessToken,
       },
       body: JSON.stringify({ query }),
     });
@@ -157,19 +167,21 @@ app.use(cors({
     'https://8th-wonder-development.myshopify.com',
     'https://dev-8th-wonder.myshopify.com',
     'https://8thwonder.com',
-    'http://localhost:3000'
+    'http://localhost:3000',
+    'https://metaobject-paginator.vercel.app'
   ],
   credentials: true
 }));
 
 // Routes
 app.get('/', (req, res) => {
-  res.send(`
-    <h1>Metaobject Paginator - Custom App</h1>
-    <p>This is a custom app for ${SHOPIFY_SHOP || 'your Shopify store'}.</p>
-    <p>App proxy endpoint: <code>/coas</code></p>
-    <p>Health check: <a href="/health">/health</a></p>
-  `);
+  const shop = req.query.shop || SHOPIFY_SHOP;
+  if (!shop) {
+    return res.status(400).send('Missing shop parameter');
+  }
+  const installUrl = `https://${shop}/admin/oauth/authorize?client_id=${SHOPIFY_API_KEY}&scope=${SHOPIFY_SCOPES}&redirect_uri=${SHOPIFY_REDIRECT_URI}&state=${Date.now()}&access_mode=offline`;
+  console.log('Redirecting to OAuth:', installUrl);
+  res.redirect(installUrl);
 });
 
 // OAuth callback - displays token for manual copy
