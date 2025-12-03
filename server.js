@@ -3,69 +3,45 @@ import fetch from 'node-fetch';
 import cors from 'cors';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
-import { Redis } from '@upstash/redis';
 
 dotenv.config();
 
 const app = express();
 
-// KV init (before any functions using it)
-const kv = new Redis({
-  url: process.env.KV_REST_API_URL,
-  token: process.env.KV_REST_API_TOKEN,
-});
-
-// Environment variables (removed SHOPIFY_ACCESS_TOKEN)
+// Environment variables
 const {
   SHOPIFY_SHOP,
-  SHOPIFY_API_KEY,
+  SHOPIFY_ACCESS_TOKEN,
   SHOPIFY_API_SECRET,
-  SHOPIFY_SCOPES = 'read_metaobjects,read_products,read_files,write_app_proxy',
-  SHOPIFY_REDIRECT_URI,
   NODE_ENV = 'development'
 } = process.env;
 
 const API_VERSION = '2025-10';
 
-// Helper: Get token for a specific shop from KV
-async function getTokenForShop(shop) {
-  if (!shop) throw new Error('No shop provided');
-  const token = await kv.get(shop);
-  if (!token) throw new Error(`No token for ${shop}; run OAuth first`);
-  return token;
-}
-
 // Health check
 app.get('/health', async (req, res) => {
-  const base = {
+  res.json({
     status: 'OK',
     shop: SHOPIFY_SHOP || 'MISSING',
-    apiKeySet: !!SHOPIFY_API_KEY,
+    hasAccessToken: !!SHOPIFY_ACCESS_TOKEN,
+    hasApiSecret: !!SHOPIFY_API_SECRET,
     environment: NODE_ENV
-  };
-  try {
-    const testKey = `health-${Date.now()}`;
-    await kv.set(testKey, 'working');
-    const testGet = await kv.get(testKey);
-    base.kvWorking = testGet === 'working';
-    // Clean up
-    await kv.del(testKey);
-  } catch (e) {
-    base.kvWorking = false;
-    base.kvError = e.message;
-  }
-  res.json(base);
+  });
 });
 
-// Fetch all COAs with pagination (now uses dynamic token)
-async function fetchAllCOAs(shopDomain) {
-  const accessToken = await getTokenForShop(shopDomain);
-  if (!shopDomain) {
-    throw new Error('SHOPIFY_SHOP domain not provided');
+// Fetch all COAs with pagination
+async function fetchAllCOAs() {
+  if (!SHOPIFY_SHOP) {
+    throw new Error('SHOPIFY_SHOP environment variable not set');
   }
-  console.log('fetchAllCOAs called with shop:', shopDomain, 'token exists:', !!accessToken);
+  if (!SHOPIFY_ACCESS_TOKEN) {
+    throw new Error('SHOPIFY_ACCESS_TOKEN environment variable not set');
+  }
+
+  console.log('fetchAllCOAs called for shop:', SHOPIFY_SHOP);
   const allCOAs = [];
   let after = null;
+
   do {
     const query = `
       query {
@@ -88,25 +64,31 @@ async function fetchAllCOAs(shopDomain) {
         }
       }
     `;
-    const response = await fetch(`https://${shopDomain}/admin/api/${API_VERSION}/graphql.json`, {
+
+    const response = await fetch(`https://${SHOPIFY_SHOP}/admin/api/${API_VERSION}/graphql.json`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-Shopify-Access-Token': accessToken,
+        'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
       },
       body: JSON.stringify({ query }),
     });
+
     console.log('GraphQL response status:', response.status);
+
     if (!response.ok) {
       const text = await response.text();
       console.error('Full GraphQL response body:', text);
       throw new Error(`HTTP ${response.status}: ${text}`);
     }
+
     const { data, errors } = await response.json();
+
     if (errors) {
       console.error('GraphQL errors:', JSON.stringify(errors, null, 2));
       throw new Error(`GraphQL query failed: ${errors[0]?.message || 'Unknown error'}`);
     }
+
     const edges = data.metaobjects?.edges || [];
     edges.forEach(edge => {
       const coa = {
@@ -121,11 +103,13 @@ async function fetchAllCOAs(shopDomain) {
         allCOAs.push(coa);
       }
     });
+
     after = data.metaobjects?.pageInfo?.hasNextPage
       ? data.metaobjects.pageInfo.endCursor
       : null;
   } while (after);
-  console.log(`Fetched ${allCOAs.length} COAs for ${shopDomain}`);
+
+  console.log(`Fetched ${allCOAs.length} COAs`);
   return allCOAs;
 }
 
@@ -180,98 +164,32 @@ app.use(cors({
 
 // Routes
 app.get('/', (req, res) => {
-  const shop = req.query.shop || SHOPIFY_SHOP;
-  if (!shop) {
-    return res.status(400).send('Missing shop parameter');
-  }
-  const installUrl = `https://${shop}/admin/oauth/authorize?client_id=${SHOPIFY_API_KEY}&scope=${SHOPIFY_SCOPES}&redirect_uri=${SHOPIFY_REDIRECT_URI}&state=${Date.now()}&access_mode=offline`;
-  console.log('Redirecting to OAuth:', installUrl);
-  res.redirect(installUrl);
-});
-
-app.get('/auth/callback', async (req, res) => {
-  const { shop, code, state } = req.query;
-  console.log('OAuth callback received:', { shop, hasCode: !!code, state });
-
-  if (!shop || !code) {
-    return res.status(400).send('Missing shop or code');
-  }
-
-  try {
-    const tokenUrl = `https://${shop}/admin/oauth/access_token`;
-    console.log('Fetching token from:', tokenUrl);
-    console.log('Using client_id:', SHOPIFY_API_KEY);
-
-    const tokenResponse = await fetch(tokenUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        client_id: SHOPIFY_API_KEY,
-        client_secret: SHOPIFY_API_SECRET,
-        code,
-      }),
-    });
-
-    console.log('Token response status:', tokenResponse.status);
-
-    if (!tokenResponse.ok) {
-      const errText = await tokenResponse.text();
-      console.error('Token response error:', errText);
-      throw new Error(`OAuth response: ${tokenResponse.status} - ${errText}`);
-    }
-
-    const data = await tokenResponse.json();
-    console.log('Token response data keys:', Object.keys(data));
-
-    if (data.access_token) {
-      // Store offline token in KV (key: shop domain)
-      console.log('Attempting to store token in KV for shop:', shop);
-      await kv.set(shop, data.access_token);
-      console.log(`✅ Stored offline token for ${shop}`);
-      res.send(`<h1>Success for ${shop}!</h1><p>Token auto-saved in KV. <a href="/">Install on another shop</a> (add ?shop=theirshop.myshopify.com)</p>`);
-    } else {
-      console.error('No access_token in response:', data);
-      res.status(500).send('Failed to get token: ' + JSON.stringify(data));
-    }
-  } catch (error) {
-    console.error('OAuth error details:', {
-      message: error.message,
-      cause: error.cause,
-      stack: error.stack,
-      shop,
-      hasApiKey: !!SHOPIFY_API_KEY,
-      hasApiSecret: !!SHOPIFY_API_SECRET,
-    });
-    res.status(500).send(`OAuth failed: ${error.message}. Check Vercel logs for details.`);
-  }
+  res.send(`
+    <h1>Metaobject Paginator - Custom App</h1>
+    <p>This is a custom app for ${SHOPIFY_SHOP || 'your Shopify store'}.</p>
+    <p>App proxy endpoint: <code>/coas</code></p>
+    <p>Health check: <a href="/health">/health</a></p>
+  `);
 });
 
 // App proxy route
 app.all('/coas', verifyAppProxy, async (req, res) => {
   try {
-    const shopDomain = req.query.shop;  // From query param
-    console.log('Received /coas request from:', shopDomain);
-    // Temporarily disable shop check for dev (re-enable later)
-    // if (!shopDomain || shopDomain !== SHOPIFY_SHOP) {
-    //   return res.status(403).json({ error: 'Unauthorized shop' });
-    // }
-    const coas = await fetchAllCOAs(shopDomain);
+    console.log('Received /coas request from:', req.query.shop);
+    const coas = await fetchAllCOAs();
     console.log('Sending COAs:', coas.length);
     res.json(coas);
   } catch (err) {
-    console.error('Full proxy error:', err.message, err.stack, {
-      shopDomain: req.query.shop,
-    });
+    console.error('Full proxy error:', err.message, err.stack);
     res.status(500).json({ error: `Failed to fetch COAs: ${err.message}` });
   }
 });
 
-// API route (for testing, no proxy)
+// API route (for testing, no proxy verification)
 app.get('/api/coas', async (req, res) => {
   try {
-    const shopDomain = req.query.shop || SHOPIFY_SHOP;
     console.log('Received /api/coas request');
-    const coas = await fetchAllCOAs(shopDomain);
+    const coas = await fetchAllCOAs();
     console.log('Sending COAs:', coas.length);
     res.json(coas);
   } catch (err) {
